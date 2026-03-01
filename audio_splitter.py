@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 from pydub import AudioSegment
 from pydub.silence import split_on_silence
+from tqdm import tqdm
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -29,14 +30,17 @@ def check_ffmpeg():
                 
     return False
 
-def process_file(file_path, args):
+def process_file(file_path, args, pbar=None):
     try:
-        logging.info(f"[INFO] Processing: {file_path.name}...")
+        if pbar:
+            pbar.set_description(f"Processing: {file_path.name}")
+        else:
+            logging.info(f"[INFO] Processing: {file_path.name}...")
         
         # Determine format
         file_ext = file_path.suffix.lower().replace('.', '')
         if file_ext not in ['mp3', 'wav', 'flac']:
-            return # Should be filtered before, but safety check
+            return
 
         # Load Audio
         try:
@@ -45,7 +49,7 @@ def process_file(file_path, args):
             logging.error(f"[ERROR] File {file_path.name}: Failed to load. {e}")
             return
 
-        # Split
+        # Use NATIVE split_on_silence for accuracy
         chunks = split_on_silence(
             audio,
             min_silence_len=args.min_silence_len,
@@ -57,8 +61,6 @@ def process_file(file_path, args):
             logging.warning(f"[WARN] File {file_path.name}: 未偵測到足夠的靜音區段，跳過分割 (Chunks: {len(chunks)}).")
             return
 
-        logging.info(f"[INFO] Found {len(chunks)} parts. Exporting...")
-
         # Create Output Directory
         output_dir = file_path.parent / file_path.stem
         try:
@@ -67,8 +69,8 @@ def process_file(file_path, args):
             logging.error(f"[ERROR] Failed to create directory {output_dir}: {e}")
             return
 
-        # Export
-        for i, chunk in enumerate(chunks):
+        # Export with progress bar
+        for i, chunk in enumerate(tqdm(chunks, desc=f"Exporting {file_path.name}", leave=False, unit="part")):
             # 01_filename.ext
             out_name = f"{i+1:02d}_{file_path.name}"
             out_path = output_dir / out_name
@@ -77,8 +79,6 @@ def process_file(file_path, args):
                 chunk.export(out_path, format=file_ext)
             except Exception as e:
                  logging.error(f"[ERROR] Failed to export {out_name}: {e}")
-        
-        logging.info(f"[INFO] Done. Saved to {output_dir}")
 
     except Exception as e:
         logging.error(f"[ERROR] Unexpected error processing {file_path.name}: {e}")
@@ -112,8 +112,10 @@ def main():
 
     logging.info(f"Found {len(files)} audio files in {args.input_dir}")
 
-    for file_path in files:
-        process_file(file_path, args)
+    # Use tqdm to show overall progress
+    with tqdm(files, desc="Overall Progress", unit="file") as pbar:
+        for file_path in pbar:
+            process_file(file_path, args, pbar=pbar)
 
 if __name__ == "__main__":
     main()
